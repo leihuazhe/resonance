@@ -8,6 +8,6 @@ git add .
 git commit -am "feat($sequence): $msg"
 
 sleep 1
-git pull --rebase origin master || true
+git pull --rebase origin main || true
 sleep 1
-git push origin master || true
+git push origin main || true
