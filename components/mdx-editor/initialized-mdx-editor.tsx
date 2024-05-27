@@ -1,5 +1,4 @@
 'use client'
-// InitializedMDXEditor.tsx
 import type { ForwardedRef } from 'react'
 import { basicDark } from 'cm6-theme-basic-dark'
 
@@ -12,8 +11,6 @@ import {
   MDXEditor,
   type MDXEditorMethods,
   type MDXEditorProps,
-  UndoRedo,
-  BoldItalicUnderlineToggles,
   toolbarPlugin,
   KitchenSinkToolbar,
   linkPlugin,
@@ -24,19 +21,21 @@ import {
   sandpackPlugin,
   codeBlockPlugin,
   codeMirrorPlugin,
-  directivesPlugin,
   diffSourcePlugin,
 } from '@mdxeditor/editor'
 import { virtuosoSampleSandpackConfig } from './boilerplate'
+import { useTheme } from 'next-themes'
 
 // Only import this to the next file
 export default function InitializedMDXEditor({
   editorRef,
   ...props
 }: { editorRef: ForwardedRef<MDXEditorMethods> | null } & MDXEditorProps) {
+  const { theme } = useTheme()
   return (
     <MDXEditor
-      className="dark-theme dark-editor"
+      className={`${theme == 'dark' ? 'dark-theme dark-editor' : ''}`}
+      contentEditableClassName="mdx-prose"
       plugins={[
         toolbarPlugin({ toolbarContents: () => <KitchenSinkToolbar /> }),
         listsPlugin(),
@@ -54,7 +53,7 @@ export default function InitializedMDXEditor({
         thematicBreakPlugin(),
         frontmatterPlugin(),
         codeBlockPlugin({ defaultCodeBlockLanguage: 'txt' }),
-        sandpackPlugin({ sandpackConfig: virtuosoSampleSandpackConfig }),
+        // sandpackPlugin({ sandpackConfig: virtuosoSampleSandpackConfig }),
         codeMirrorPlugin({
           codeBlockLanguages: { js: 'JavaScript', css: 'CSS', txt: 'text', tsx: 'TypeScript' },
           codeMirrorExtensions: [basicDark],
@@ -62,11 +61,11 @@ export default function InitializedMDXEditor({
         // directivesPlugin({
         //   directiveDescriptors: [YoutubeDirectiveDescriptor, AdmonitionDirectiveDescriptor],
         // }),
-        diffSourcePlugin({
-          viewMode: 'rich-text',
-          diffMarkdown: 'boo',
-          codeMirrorExtensions: [basicDark],
-        }),
+        // diffSourcePlugin({
+        //   viewMode: 'rich-text',
+        //   diffMarkdown: 'boo',
+        //   codeMirrorExtensions: [basicDark],
+        // }),
         markdownShortcutPlugin(),
       ]}
       {...props}

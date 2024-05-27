@@ -1,6 +1,6 @@
 'use client'
 
-// import InitializedMDXEditor from '@/components/mdx-editor/initialized-mdx-editor'
+import '@mdxeditor/editor/style.css'
 import { MDXEditorMethods, MDXEditorProps } from '@mdxeditor/editor'
 import dynamic from 'next/dynamic'
 import { Suspense, forwardRef, useRef } from 'react'
@@ -18,7 +18,7 @@ Hello **world**!
 export default function EditorHome() {
   const editorRef = useRef(null)
   return (
-    <>
+    <div className="mdxeditor">
       <p>
         This is a bare-bones unstyled MDX editor without any plugins and no toolbar. Check the
         EditorComponent.tsx file for the code.
@@ -36,6 +36,6 @@ export default function EditorHome() {
           <EditorComp editorRef={editorRef} markdown={markdown} />
         </Suspense>
       </div>
-    </>
+    </div>
   )
 }
