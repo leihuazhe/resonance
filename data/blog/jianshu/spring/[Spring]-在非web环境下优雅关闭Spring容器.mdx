@@ -1,0 +1,83 @@
+---
+title: [Spring] 在非web环境下优雅关闭Spring容器
+date: '2018-07-26'
+tags: ['spring']
+draft: false
+summary: '通过这篇文章，读者可以了解到在非Web环境下如何利用Spring框架的生命周期管理功能来实现应用程序的优雅关闭.'
+---
+
+# 背景
+
+> 当我们设计一个程序时，依赖了Spring容器，然而并不需要spring的web环境时(Spring web环境已经提供了优雅关闭)，即程序启动只需要启动Spring ApplicationContext即可，那我们如何去进行优雅关闭呢?
+
+设计一个代理程序,仅需要Spring容器管理部分bean并启动即可。该工程最终打成一个可执行Jar包，并构建成docker镜像后进行启动
+
+```java
+public class Main {
+    public static void main(String[] args) throws InterruptedException {
+        ClassPathXmlApplicationContext applicationContext = new ClassPathXmlApplicationContext("classpath*:services.xml");
+        applicationContext.start();
+    }
+}
+```
+
+有一个bean开启线程执行业务任务
+
+```java
+@Component
+public class HelloLifeCycle implements Lifecycle {
+    private volatile boolean running = false;
+    private volatile boolean businessRunning = true;
+
+
+    private ExecutorService executors = Executors.newFixedThreadPool(1);
+
+    public HelloLifeCycle() {
+        executors.execute(() -> {
+            while (businessRunning) {
+               //启动后,做业务需要做的事情
+            }
+        });
+    }
+
+
+    public void start() {
+        logger.info("lifycycle start");
+        running = true;
+
+    }
+
+    public void stop() {
+        businessRunning=false;
+        logger.info("lifycycle stop ,and stop the execute");
+        executors.shutdown();
+        try {
+            executors.awaitTermination(1, TimeUnit.HOURS);
+        } catch (InterruptedException e) {
+        }
+        running = false;
+    }
+
+    public boolean isRunning() {
+        return running;
+    }
+}
+```
+
+该业务类实现了Spring的LifeCycle钩子，Spring在调用其context的start()和stop（）方法时会回调业务类实现的start和stop方法
+
+# 优雅关闭
+
+如果就像上面的Main启动类，我们直接kill这个进程时，Spring是不会优雅关闭的，从而不会调用stop方法
+
+```
+public class Main {
+    public static void main(String[] args) throws InterruptedException {
+        ClassPathXmlApplicationContext applicationContext = new ClassPathXmlApplicationContext("classpath*:services.xml");
+        applicationContext.registerShutdownHook();
+        applicationContext.start();
+    }
+}
+```
+
+当注册了JVM钩子后，即可以实现优雅关闭

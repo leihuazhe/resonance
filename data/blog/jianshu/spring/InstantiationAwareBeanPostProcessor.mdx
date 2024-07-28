@@ -1,0 +1,66 @@
+> 主要作为依赖注入时的后置处理器而使用。时机在 `doCreateBean` 中， 通过 `createInstance` 实例化 `Bean` 之后，然后在 `populateBean` 时，通过回调这个后置处理器，对 `Bean` 中的属性进行依赖注入 (不包含构造器注入)。
+
+Bean 在实例化的前后这个过程中，会分别调用 InstantiationAwareBeanPostProcessor 的前后置回调方法。
+
+第一处：
+
+createBean
+
+```java
+try {
+	// Give BeanPostProcessors a chance to return a proxy instead of the target bean instance.
+	Object bean = resolveBeforeInstantiation(beanName, mbd);
+        if (bean != null) {
+	    return bean;
+        }
+} catch (Throwable ex) {
+	throw new BeanCreationException(mbd.getResourceDescription(), beanName,
+					"BeanPostProcessor before instantiation of bean failed", ex);
+}
+```
+
+因此我们在去实例化 Bean 之前可以直接通过 postProcessBeforeInstantiation 来获取到一个bean，如果能够获取到，后面所有的操作不用再进行。
+
+## 注意
+
+通过注解形式的依赖注入为 `Bean` 属性赋值以后，在后一个过程会执行 `applyPropertyValues(beanName, mbd, bw, pvs) `
+方法，对 `beanDefinition` 中定义的属性 `set` 赋值，注意如果此时有属性赋值，而之前注解注入的属性，那么注解注入的属性会被覆盖。
+
+```xml
+<bean id="manager" class="com.hzways.spring.pvs.Manager">
+        <property name="age" value="20"/>
+        <property name="name" value="maple"/>
+        <property name="gender" value="man"/>
+        <property name="money" ref="money"/>
+    </bean>
+
+    <bean id="money" class="com.hzways.spring.pvs.Money"/>
+
+```
+
+```java
+public class Manager {
+    private String name;
+
+    private String gender;
+    private int age;
+
+    @Autowired
+    @Qualifier("money1")
+    private Money money;
+    //omitted setter and getter
+}
+```
+
+通过 `@Autowired` 注入的 `money1` 会被 `xml` 文件中设置的 `ref money` 覆盖。
+
+一般使用注解注入的 bean ，进入 `applyPropertyValues` 时，从其 `BeanDefinition` 中获取到 的 `pvs` 的`length` 一般为0，即没有进行设置。
+
+```java
+protected void applyPropertyValues(String beanName, BeanDefinition mbd, BeanWrapper bw, PropertyValues pvs) {
+		if (pvs == null || pvs.isEmpty()) {
+			return;
+		}
+  //omitted
+}
+```

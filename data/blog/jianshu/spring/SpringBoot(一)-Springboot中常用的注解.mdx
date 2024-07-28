@@ -1,0 +1,125 @@
+##### 1.@Conditional注释，Spring 4框架的新特性
+
+**此注释使得只有在特定条件满足时才启用一些配置**。SrpingBoot的AutoConfig大量使用了@Conditional，它会根据运行环境来动态注入Bean。这里介绍一些@Conditional的使用和原理，并自定义@Conditional来自定义功能。
+`@Conditional`是`SpringFramework`的功能，`SpringBoot`在它的基础上定义了`@ConditionalOnClass`，`@ConditionalOnProperty`等一系列的注解来实现更丰富的内容。
+
+---
+
+###### @ConditionalOnBean
+
+仅仅在当前上下文中存在某个对象时，才会实例化一个Bean
+
+###### @ConditionalOnClass
+
+某个class位于类路径上，才会实例化一个Bean)，该注解的参数对应的类必须存在，否则不解析该注解修饰的配置类
+
+###### @ConditionalOnExpression
+
+当表达式为true的时候，才会实例化一个Bean
+
+###### @ConditionalOnMissingBean
+
+仅仅在当前上下文中不存在某个对象时，才会实例化一个Bean，该注解表示，如果存在它修饰的类的bean，则不需要再创建这个bean，可以给该注解传入参数例如`@ConditionOnMissingBean(name = "example")`，这个表示如果`name`为`“example”`的`bean`存在，这该注解修饰的代码块不执行
+
+###### @ConditionalOnMissingClass
+
+某个class类路径上不存在的时候，才会实例化一个Bean
+
+###### @ConditionalOnNotWebApplication
+
+不是web应用时，才会执行
+
+---
+
+###### 参考：[如何自定义@Conditional](http://www.jianshu.com/p/1d0fb7cd8a26)
+
+---
+
+##### 2.Properties系列注释
+
+`@EnableConfigurationProperties`
+
+---
+
+###### @ConfigurationProperties(prefix = "may")
+
+在需要注入配置的类上加上这个注解，prefix的意思是，以该前缀打头的配置，以下是例子
+
+```
+    @ConfigurationProperties(prefix = "may")
+    public class User {
+        private String name;
+        private String gender;
+
+       //省略setter,getter方法
+
+    }
+
+```
+
+application.yml中的配置
+
+```
+   may
+      name: youjie
+      gender: man
+```
+
+如果不用系统初始的application.yml配置类，而是使用自己的如`youjie.yml`，可以如下配置
+
+```
+@ConfigurationProperties(prefix = "may",locations = "classpath:youjie.yml")
+    public class User2 {
+        private String name;
+        private String gender;
+
+       //省略setter,getter方法
+
+    }
+
+```
+
+**过时**：由于Spring-boot 1.5.2版本移除了，locations这个属性,因此上述这种方式在最新的版本中过时。
+
+###### @PropertySource
+
+Spring-boot 1.5.2版本之后，采用下面这种方式
+
+```
+@Component
+//@PropertySource只能加载.properties文件，需要将上面的yml文件，改为.properties文件
+@PropertySource("classpath:may.properties")
+@ConfigurationProperties(prefix="may")
+public class User2 {
+        private String name;
+        private String gender;
+
+       //省略setter,getter方法
+
+    }
+```
+
+###### @EnableConfigurationProperties
+
+最后注意在spring Boot入口类加上@EnableConfigurationProperties
+
+```
+    @SpringBootApplication
+    @EnableConfigurationProperties({User.class,User2.class})
+    public class DemoApplication {
+
+        public static void main(String[] args) {
+            SpringApplication.run(DemoApplication.class, args);
+        }
+    }
+```
+
+其实这里`@EnableConfigurationProperties({User.class,User2.class})` 可以省略
+
+---
+
+未完待续....
+AutoConfig原理：`http://blog.csdn.net/xiaoyu411502/article/details/52770723`
+获取配置文件：`http://www.cnblogs.com/aqsunkai/archive/2017/04/07/6690573.html`
+
+---

@@ -1,0 +1,175 @@
+> `Spring` 工厂加载机制，即 `Spring Factories Loader`，核心逻辑是使用 `SpringFactoriesLoader` 加载由用户实现的类，并配置在约定好的`META-INF/spring.factories` 路径下，该机制可以为框架上下文动态的增加扩展。
+> 该机制类似于 `Java SPI`，给用户提供可扩展的钩子，从而达到对框架的自定义扩展功能。
+
+### 核心实现类 SpringFactoriesLoader
+
+> `SpringFactoriesLoader` 是 `Spring` 工厂加载机制的核心底层实现类。它的主要作用是 从 `META-INF/spring.factories` 路径下加载指定接口的实现类。该文件可能存在于工程类路径下或者 jar 包之内，所以会存在多个该文件。
+
+```java
+public static final String FACTORIES_RESOURCE_LOCATION = "META-INF/spring.factories";
+```
+
+`SpringFactoriesLoader` `loadFactories` load 并从 `FACTORIES_RESOURCE_LOCATION`文件中实例化给定类型的工厂实现类。 `spring.factories` 文件必须采用 `Properties` 格式，其中键是接口或抽象类的完全限定\*名称，值是逗号分隔的实现类名称列表。例如:
+
+该文件的格式，`Key` 必须为接口或抽象类的全限定名，`value` 为 具体的实现类，多个以 逗号分隔。类似如下配置：
+
+```properties
+# Application Context Initializers
+org.springframework.context.ApplicationContextInitializer=\
+org.springframework.boot.context.ConfigurationWarningsApplicationContextInitializer,\
+org.springframework.boot.context.ContextIdApplicationContextInitializer,\
+org.springframework.boot.context.config.DelegatingApplicationContextInitializer,\
+org.springframework.boot.web.context.ServerPortInfoApplicationContextInitializer
+```
+
+从该文件中我们可以看到，其中 `ApplicationContextInitializer` 为父类，value为实现类，以逗号分隔。
+
+### SpringFactoriesLoader 源码分析
+
+> `Spring Boot` 完成自动装配的核心之一就是工厂加载机制。我们以 `Spring Boot` 的自动装配为例来分析。如果要开启 `Spring` 的自动装配功能，会使用 `@EnableAutoConfiguration` 这个注解，这个注解会 `Import` `AutoConfigurationImportSelector` 这个类。
+
+```java
+@Target(ElementType.TYPE)
+@Retention(RetentionPolicy.RUNTIME)
+@Documented
+@Inherited
+@AutoConfigurationPackage
+@Import(AutoConfigurationImportSelector.class)
+public @interface EnableAutoConfiguration {
+```
+
+##### `AutoConfigurationImportSelector` 中有一个方法就是加载 `EnableAutoConfiguration` 为 `key` 的实现配置类。
+
+```java
+protected List<AutoConfigurationImportFilter> getAutoConfigurationImportFilters() {
+	return SpringFactoriesLoader.loadFactories(AutoConfigurationImportFilter.class,
+				this.beanClassLoader)
+}
+```
+
+##### `SpringFactoriesLoader` `loadFactories` 加载 所有以 `factoryClass` 为 `Key` 的实现类
+
+```java
+public static <T> List<T> loadFactories(Class<T> factoryClass, @Nullable ClassLoader classLoader) {
+		// 省略部分前置判断和 logger 代码
+		ClassLoader classLoaderToUse = classLoader;
+		if (classLoaderToUse == null) {
+			classLoaderToUse = SpringFactoriesLoader.class.getClassLoader();
+		}
+    	//根据当前接口类的全限定名作为key，从loadFactoryNames从文件中获取到所有实现类的全限定名
+		List<String> factoryNames = loadFactoryNames(factoryClass, classLoaderToUse);
+
+		List<T> result = new ArrayList<>(factoryNames.size());
+    	//实例化所有实现类，并保存到 result 中返回。
+		for (String factoryName : factoryNames) {
+			result.add(instantiateFactory(factoryName, factoryClass, classLoaderToUse));
+		}
+		AnnotationAwareOrderComparator.sort(result);
+		return result;
+	}
+```
+
+##### 调用 `loadSpringFactories` 从`META-INF/spring.factories`文件中进行加载
+
+> 从文件中读取接口和实现类的逻辑，返回 `Map<String, List<String>>`
+
+```java
+private static Map<String, List<String>> loadSpringFactories(@Nullable ClassLoader classLoader) {
+		MultiValueMap<String, String> result = cache.get(classLoader);
+		if (result != null) {
+			return result;
+		}
+		try {
+            //FACTORIES_RESOURCE_LOCATION --> META-INF/spring.factories
+			Enumeration<URL> urls = (classLoader != null ?
+					classLoader.getResources(FACTORIES_RESOURCE_LOCATION) :
+					ClassLoader.getSystemResources(FACTORIES_RESOURCE_LOCATION));
+            //一Key多值 Map，适合上文提到的一个接口多个实现类的情形。
+			result = new LinkedMultiValueMap<>();
+			while (urls.hasMoreElements()) {
+				URL url = urls.nextElement();
+				UrlResource resource = new UrlResource(url);
+				Properties properties = PropertiesLoaderUtils.loadProperties(resource);
+				for (Map.Entry<?, ?> entry : properties.entrySet()) {
+                    //以逗号进行分割，得到List的实现类全限定名集合
+					List<String> factoryClassNames = Arrays.asList(
+							StringUtils.commaDelimitedListToStringArray((String) entry.getValue()));
+					result.addAll((String) entry.getKey(), factoryClassNames);
+				}
+			}
+			cache.put(classLoader, result);
+            //返回
+			return result;
+		}
+		catch (IOException ex) {
+			throw new IllegalArgumentException("Unable to load factories from location [" +
+					FACTORIES_RESOURCE_LOCATION + "]", ex);
+		}
+}
+```
+
+#### 总结
+
+上面通过以 `Spring Boot` 的自动装配为例，我们分析了 `Spring` 工厂加载机制的整个过程，重点分析了`SpringFactoriesLoader`类。通过这样的机制，我们可以十分的方便的为框架提供各式各样的扩展插件，我们可以自己定义自己的组件的自动装配配置类，然后通过工厂加载机制让 `Spring` 进行加载并得到自动装配。
+
+### 工厂加载机制的应用 ApplicationContextInitializer
+
+> `ApplicationContextInitializer` 是在 `Spring Boot` 或者 `Spring Mvc` 启动过程中调用的。具体时机为Spring 应用上下文 `refresh` 之前(调用 `refresh` 方法)。
+
+ApplicationContextInitializer 主要提供应用上下文未refresh之前的扩展，这时候可以对 `ConfigurableApplicationContext` 进行一些扩展处理等。
+
+自定义一个类，实现 `ApplicationContextInitializer` ，并重写 `initialize` 方法：
+
+```java
+@Order(Ordered.HIGHEST_PRECEDENCE)
+public class HelloWorldApplicationContextInitializer implements ApplicationContextInitializer {
+
+    @Override
+    public void initialize(ConfigurableApplicationContext applicationContext) {
+        System.out.println("=================> applicationContext: " + applicationContext.getId());
+    }
+}
+```
+
+启动 `Spring Boot` 程序，我们可以看到在 `refresh` 之前，会在控制台打印上面这句话。
+
+- 另外的实现方式：
+  - application.properties添加配置方式：
+
+```properties
+context.initializer.classes=com.maple.spring.initializer.AfterHelloWorldApplicationContextInitializer
+```
+
+对于这种方式是通过 `DelegatingApplicationContextInitializer` 这个初始化类中的 `initialize` 方法获取到 `application.properties` 中 `context.initializer.classes` 对应的实现类，并对该实现类进行加载。
+
+3.在 `SpringApplication` 中直接添加
+
+```java
+public static void main(String[] args) {
+        new SpringApplicationBuilder(SpringBootDemo3Application.class)
+                .initializers(new AfterHelloWorldApplicationContextInitializer())
+                .run(args);
+    }
+}
+```
+
+### Spring Boot 使用 工厂机制加载 ApplicationListener 实现类
+
+```properties
+# Application Listeners
+org.springframework.context.ApplicationListener=\
+org.springframework.boot.ClearCachesApplicationListener,\
+org.springframework.boot.builder.ParentContextCloserApplicationListener,\
+org.springframework.boot.context.FileEncodingApplicationListener,\
+org.springframework.boot.context.config.AnsiOutputApplicationListener,\
+org.springframework.boot.context.config.ConfigFileApplicationListener,\
+org.springframework.boot.context.config.DelegatingApplicationListener,\
+org.springframework.boot.context.logging.ClasspathLoggingApplicationListener,\
+org.springframework.boot.context.logging.LoggingApplicationListener,\
+org.springframework.boot.liquibase.LiquibaseServiceLocatorApplicationListener
+```
+
+### 总结
+
+工厂加载机制是 `Spring` 动态加载实现类的一种方式，提前在扩展类中写好对应自动配置类，我们可以完成自动装配的效果。`Spring Boot` 自动装配模块其中的loader 自动配置实现类就是基于此实现的。
+`Spring Boot` 的一些新特性几乎用到的都是 `Spring Framework` 的核心特性。因此学习 `Spring Boot` ，归根结底就是学习 `Spring Framework` 核心。它是所有 `Spring` 应用的基石，所以我们应该从上至下，由浅入深来进行学习和分析。

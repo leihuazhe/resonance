@@ -1,0 +1,118 @@
+---
+title: 记一次分布式ID服务与spring事物连接异常
+date: '2018-09-17'
+tags: ['trouble-shooting']
+draft: false
+summary: '分布式服务ID调用获取分布式ID时频繁超时,最终排查与 Spring 事务连接有关.'
+---
+
+# 背景
+
+昨天部分业务服务调用ID服务异常，返回超时。于是我们跟踪id服务日志，发现如下:
+![异常.png](/post-pics/ts/ts1-1.png)
+
+抓住主要异常点
+
+```log
+Caused by:
+org.springframework.transaction.CannotCreateTransactionException: Could not open JDBC Connection for transaction; nested exception is com.alibaba.druid.pool.GetConnectionTimeoutException: wait millis 10000, active 50, maxActive 50, creating 0, runningSqlCount 1 : select * from id_info where biz_tag=? FOR UPDATE
+        at org.springframework.jdbc.datasource.DataSourceTransactionManager.doBegin(DataSourceTransactionManager.java:252) ~[spring-jdbc-4.3.5.RELEASE.jar:4.3.5.RELEASE]
+        at org.springframework.transaction.support.AbstractPlatformTransactionManager.getTransaction(AbstractPlatformTransactionManager.java:373) ~[spring-tx-4.3.5.RELEASE.jar:4.3.5.RELEASE]
+        at org.springframework.transaction.interceptor.TransactionAspectSupport.createTransactionIfNecessary(TransactionAspectSupport.java:447) ~[spring-tx-4.3.5.RELEASE.jar:4.3.5.RELEASE]
+        at org.springframework.transaction.interceptor.TransactionAspectSupport.invokeWithinTransaction(TransactionAspectSupport.java:277) ~[spring-tx-4.3.5.RELEASE.jar:4.3.5.RELEASE]
+        at org.springframework.transaction.interceptor.TransactionInterceptor.invoke(TransactionInterceptor.java:96) ~[spring-tx-4.3.5.RELEASE.jar:4.3.5.RELEASE]
+        at org.springframework.aop.framework.ReflectiveMethodInvocation.proceed(ReflectiveMethodInvocation.java:179) ~[spring-aop-4.3.5.RELEASE.jar:4.3.5.RELEASE]
+        at org.springframework.aop.framework.JdkDynamicAopProxy.invoke(JdkDynamicAopProxy.java:213) ~[spring-aop-4.3.5.RELEASE.jar:4.3.5.RELEASE]
+        at com.sun.proxy.$Proxy20.genId(Unknown Source) ~[na:na]
+        at com.today.soa.idgen.scala.IDServiceCodec$genId.apply(IDServiceCodec.scala:24) ~[idgen-api_2.12-2.0.5.jar:2.0.5]
+        at com.today.soa.idgen.scala.IDServiceCodec$genId.apply(IDServiceCodec.scala:19) ~[idgen-api_2.12-2.0.5.jar:2.0.5]
+```
+
+# 日志分析
+
+直接原因是,有请求过来时，调用 `IDService` 的 `genId` 方法获取 `id` 号。由于整个服务加了 `@Transactional` 注解，这个类被 `Spring` 代理了，再每次调用方法之前，需要开启事务，然后结束方法后关闭事务。
+
+在本地打开 `DEBUG` 日志 分析,一次正常的请求日志如下:
+
+```log
+09-17 13:31:40 189 dapeng-container-biz-pool-5 INFO [ac1d0002acaaa723] - request[seqId:5]:service[com.today.soa.idgen.service.IDService]:version[1.0.0]:method[genId]   userIp:172.20.0.2
+09-17 13:31:40 191 dapeng-container-biz-pool-5 DEBUG [ac1d0002acaaa723] - Creating new transaction with name [com.today.soa.idgen.scala.IDServiceImpl.genId]: PROPAGATION_REQUIRED,ISOLATION_DEFAULT; ''
+09-17 13:31:40 191 dapeng-container-biz-pool-5 DEBUG [ac1d0002acaaa723] - Acquired Connection [com.alibaba.druid.proxy.jdbc.ConnectionProxyImpl@5f74c546] for JDBC transaction
+09-17 13:31:40 191 dapeng-container-biz-pool-5 DEBUG [ac1d0002acaaa723] - Switching JDBC Connection [com.alibaba.druid.proxy.jdbc.ConnectionProxyImpl@5f74c546] to manual commit
+09-17 13:31:40 193 dapeng-container-biz-pool-5 INFO [ac1d0002acaaa723] - on idService bizTag: order  maxId: 215824  nextId: 214830
+09-17 13:31:40 194 dapeng-container-biz-pool-5 DEBUG [ac1d0002acaaa723] - Initiating transaction commit
+09-17 13:31:40 194 dapeng-container-biz-pool-5 DEBUG [ac1d0002acaaa723] - Committing JDBC transaction on Connection [com.alibaba.druid.proxy.jdbc.ConnectionProxyImpl@5f74c546]
+09-17 13:31:40 197 dapeng-container-biz-pool-5 DEBUG [ac1d0002acaaa723] - Releasing JDBC Connection [com.alibaba.druid.proxy.jdbc.ConnectionProxyImpl@5f74c546] after transaction
+09-17 13:31:40 197 dapeng-container-biz-pool-5 INFO [ac1d0002acaaa723] - response[seqId:5, respCode:0000]:service[com.today.soa.idgen.service.IDService]:version[1.0.0]:method[genId] cost:8ms
+```
+
+每次请求不管有没有操作数据库，第一步都是要从 druid 连接池拿到一个连接，然后再开启事务，然后继续后续方法逻辑。
+
+# 问题出现
+
+昨天日志分析，有三次请求在从连接池获取mysql连接并准备开启事务时出现异常。 异常原因是，druid 配置的最大连接数是50 条，此时50条连接都是 `active` 状态。
+
+当前请求在等待了10s后，仍未获取到连接，于是报了获取连接超时的异常。
+
+```log
+ Could not open JDBC Connection for transaction; nested exception is com.alibaba.druid.pool.GetConnectionTimeoutException:
+ wait millis 10000, active 50, maxActive 50, creating 0, runningSqlCount 1 : select * from id_info where biz_tag=? FOR UPDATE
+```
+
+在报这一异常的同时，另外一个请求报了一个slow sql
+
+```log
+- slow sql 25943 millis. select * from id_info where biz_tag=? FOR UPDATE ["sku_stock_summary_id"]
+```
+
+分析上面日志，异常的日志都带有如下一句:
+
+```
+runningSqlCount 1 : select * from id_info where biz_tag=? FOR UPDATE
+```
+
+说明大部分连接在这句sql这里阻塞了。
+
+后来得知昨天17时28分，就是日志报错的同时，有人为对数据库操作，具体操作如下:
+![手工.png](/post-pics/ts/ts1-2.png)
+
+# 总结
+
+由于id服务节点被频繁调用，调用频率很高,而每次调用方法之前都会开启事务（使用了 Spring aop 声明式事务）。 不管本次请求是使用内存缓存的id还是去数据库获取id，都会去拿连接。
+
+如果平时连接不阻塞，返回非常快，是不会出现等待连接超时的问题。问题是昨天17时28分左右，有手动去操作数据库的表。导致了上述sql for update 出现了锁等待，导致连接持有时间变长，大部分连接同时去等待。新的方法请求时，没有可用的连接获取，等待10s后仍未获得连接，随即报错。
+
+# 解决方案
+
+不使用spring声明式事务，方法调用时，当真正要与数据库打交道时，才会去获取连接。而大多数情况下，我们只会去内存里面拿数据并返回。改良如下：
+
+```java
+/**
+    * if maxId is not enough , doFetch to get more maxId
+    *
+    * @param bizItem
+    */
+  private def doFetchMaxId(bizItem: BizItem): BizItem = {
+    val res = dataSource.row[IDInfo](sql"""select * from id_info where biz_tag=${bizItem.bizTag} FOR UPDATE """)
+
+    val idInfo = res match {
+      case Some(x) => x
+      case None => throw new SoaException(ErrorCode.BIZ_TAG_NOT_FOUND, s"找不到当前请求id对应的BizTag,请在数据库中进行设置:${bizItem.bizTag}")
+    }
+    assert(idInfo.step >= 1024, IDException.buildEx(ErrorCode.BIZ_STEP_1024, s"step字段值至少要为1024或者其整数倍,当前 bizTag ${idInfo.bizTag} ,step ${idInfo.step}"))
+    val newMaxId = idInfo.maxId + idInfo.step
+
+    val execute = dataSource.executeUpdate(sql"""update id_info set max_id=${newMaxId} where biz_tag=${bizItem.bizTag}""")
+
+
+    assert(execute == 1, IDException.update_db_id_failed)
+
+    bizItem.nextId.set(idInfo.maxId)
+    bizItem.maxId.set(newMaxId)
+    logger.info(s"idService doFetchMaxId :: current bizTag [${bizItem.bizTag}] :: next [${bizItem.nextId.get} - ${bizItem.maxId.get}]")
+    Thread.sleep(20000)
+    bizItem
+  }
+```
+
+使用 `scala-sql` 自己管理事务。

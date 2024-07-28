@@ -1,0 +1,241 @@
+> 随着分布式和微服务部署的不断兴起。公司的工程模块和依赖变得越来越多，从而错综复杂。因此，通过通用 脚手架与通用模块等将各个项目通用的模块单独提炼出来，并形成依赖 jar，这类配置尤以 Spring 来的广泛，本文将介绍基于此形成的一种痛点及其解决方案。
+
+## 1.痛点
+
+> 你有没有这样的痛点？
+
+- 1.当前开发工程依赖的 spring-boot-starter 脚手架，配置了很多通用 bean，而部分无法满足自身需求，因此发现自己定义的 bean 和脚手架中的 某个 bean 出现冲突，导致出现 bean 重复的报错问题。
+
+- 2.脚手架的引入扰乱了当前业务线的 bean 依赖流程，有时候去捋顺这些依赖都煞费苦心，程序运行时，出现各类奇怪的运行冲突与报错。
+- 3.随着大家对 spring boot 使用的深入,大家对 @Condition\* 之类的注解会越用越多。如果此时，无法控制。
+
+本文尝试着通过 Sping 父子容器这一概念来对解决这些痛点提供一些思路与demo。
+
+## 2.Spring父子容器
+
+### 2.1.介绍
+
+ApplicationContext 是 Spring 的高级容器，目前我们使用的 SpringBoot 和 SpringMvc 等容器，使用的都是 ApplicationContext 的子类。该上下文支持父子容器的概念，具体是定义可见 **ConfigurableApplicationContext** 类：
+
+```java
+public interface ConfigurableApplicationContext extends ApplicationContext, Lifecycle, Closeable {
+  // 其他方法省略
+  void setParent(@Nullable ApplicationContext parent);
+}
+```
+
+通过此类,我们可以在某一个 applicationContext 中 设置它的父容器 parent。
+
+### 2.2.Spring 父子容器的使用场景
+
+Spring中,父子容器不是继承关系，他们是通过组合关系完成的，即子容器通过 `setParent()`持有父容器的引用。
+
+- 父容器对子容器可见，子容器对父容器不可见。详细来说，就是 Spring 父子容器中，父容器不能访问子容器的 bean 。而子容器可以访问父容器的内容。
+- 如果父子容器中都存在某个 bean 的情况，子容器会使用自身上下文定义的 bean，从而覆盖父容器定义的相同的 bean。（这点很重要）。
+
+**总结：父子容器的主要用途是上下文隔离。**
+
+在传统的 SpringMVC + Spring 的架构中，Spring 负责 service 和 dao 层的 bean 管理，并支持事务,aop切面等功能。
+
+而springMVC 为子容器，直接托管 controller 层等与 web 相关的代码，在使用 service 层的 bean时，直接从 父容器中获取即可。
+
+而现今，在使用 springboot 的场景下，我们一般只有一个上下文。父子容器的使用和概念貌似已经被开发人员遗忘了。
+
+但是，当出现文章开头出现的那些痛点时，我们应该怎么做呢？
+
+其实我们就可以通过 Spring 父子容器的概念来实现 脚手架 与 当前工程的 bean 隔离，来达到和解决 bean 依赖冲突的各类问题。
+
+## 3.Spring父子容器上下文隔离实战
+
+### 3.1.通用脚手架与Bean冲突
+
+假设我们开发了一个 Zookeeper 的 starter，引入这个 starter 包，就会自动注入zookeeper 相关的配置，下面代码是脚手架 starter 中的配置类。
+
+以下是非常简单的代码模拟：
+
+```java
+@Configuration
+public class ZookeeperConfiguration {
+  @Bean
+  public ZookeeperClient zookeeperClient() {
+    return new ZookeeperClient("From Starter.");
+  }
+}
+```
+
+通过 @Enable\* 注解启用上面的配置 (spring有更完善的 通过 spring.factories 配置自动加载，这里不做赘述)。
+
+```java
+@Target({ElementType.TYPE})
+@Retention(RetentionPolicy.RUNTIME)
+@Documented
+@Inherited
+@Import(ZookeeperConfiguration.class)
+public @interface EnableZookeeper {
+}
+```
+
+我们的工程通过引入这个包之后,然后在启动类配置如下信息：
+
+```java
+@EnableZookeeper
+@SpringBootApplication
+public class ChildSpringServer {
+  public static void main(String[] args) {
+   	SpringApplication.run(ChildSpringServer.class, args);
+  }
+}
+```
+
+而如果我们的工程代码中也有一个自己的 zookeeper 的配置 bean：
+
+```java
+@Slf4j
+@Configuration
+public class ChildConfiguration {
+  @Bean
+  ZookeeperClient zookeeperClient() {
+    return new ZookeeperClient("From Current Project");
+  }
+}
+```
+
+此时，启动项目，便会报如下错：
+
+```log
+***************************
+APPLICATION FAILED TO START
+***************************
+
+Description:
+
+The bean 'zookeeperClient', defined in com.maple.common.starter.ZookeeperConfiguration, could not be registered. A bean with that name has already been defined in class path resource [com/maple/spring/container/child/config/ChildConfiguration.class] and overriding is disabled.
+
+Action:
+
+Consider renaming one of the beans or enabling overriding by setting spring.main.allow-bean-definition-overriding=true
+
+```
+
+这个错误直接原因就是：当前工程上下文和依赖的组件上下文没有隔离。
+
+### 3.2.问题跟踪
+
+常用解决办法一般是在 starter 脚手架组件的bean 配置类上面加 @Condition\* 类的注解，如我们改造上面 starter 的代码：
+
+```java
+@Slf4j
+@Configuration
+public class ZookeeperConfiguration {
+  @Bean
+  //这是新加的
+  @ConditionalOnMissingBean
+  public ZookeeperClient zookeeperClient() {
+    return new ZookeeperClient("From Starter.");
+  }
+}
+```
+
+@ConditionalOnMissingBean 注解表示的意思是：
+
+如果在 spring 上下文中找不到 GsonBuilder的 bean，这里才会配置。如果 上下文已经有相同的 bean 类型，那么这里就不会进行配置。
+
+本文我们将不采用这种做法，我们可以通过 Spring 父子容器来隔离工程代码 和 starter 等依赖代码。
+
+### 3.3.Spring 父子容器隔离上下文
+
+将公共组件包(如 通用log、通用缓存)等里面的 Spring 配置信息通通由 父容器进行加载。
+
+将当前工程上下文中的所有 Spring 配置由 子容器进行加载。
+
+父容器和子容器可以存在相同类型的 bean，并且如果子容器存在，则会优先使用子容器的 bean，我们可以将上面代码进行如下改造：
+
+在工程目录下创建一个 parent 包，并编写 parent 父容器的配置类：
+
+```java
+@Slf4j
+@Configuration
+//将 starter 中的 enable 注解放在父容器的 配置中
+@EnableZookeeper
+public class ParentSpringConfiguration {
+}
+```
+
+自定义实现 SpringApplicationBuilder 类:
+
+```java
+public class ChildSpringApplicationBuilder extends SpringApplicationBuilder {
+
+
+  public ChildSpringApplicationBuilder(Class<?>... sources) {
+    super(sources);
+  }
+
+  public ChildSpringApplicationBuilder functions() {
+    //初始化父容器,class类为刚写的父配置文件 ParentSpringConfiguration
+    GenericApplicationContext parent = new AnnotationConfigApplicationContext(ParentSpringConfiguration.class);
+    this.parent(parent);
+    return this;
+  }
+
+}
+```
+
+- 主要作用是在启动 Springboot 子容器时，先根据父配置类 ParentSpringConfiguration 初始化父 容器 GenericApplicationContext。
+- 然后当前 SpringApplicationBuilder 上下文将 父容器设置为初始化的父容器，这样就完成了父子容器配置。
+- starter 中的 GsonBuilder 会在父容器中进行初始化。
+
+启动 Spring 容器：
+
+```java
+@Slf4j
+//@EnableZookeeper 此注解放到了 ParentConfiguration中。
+@SpringBootApplication
+public class ChildSpringServer {
+
+  public static void main(String[] args) {
+    ConfigurableApplicationContext applicationContext = new ChildSpringApplicationBuilder(ChildSpringServer.class)
+        .functions()
+        .run(args);
+
+    log.info("applicationContext: {}", applicationContext);
+  }
+}
+```
+
+此时，可以正常启动 spring 容器，我们通过 applicationContext.getBean() 的形式获取 ZookeeperClinet。
+
+```java
+public static void main(String[] args) {
+    ConfigurableApplicationContext applicationContext = new ChildSpringApplicationBuilder(ChildSpringServer.class)
+        .functions()
+        .registerShutdownHook(false)
+        .run(args);
+
+    log.info("applicationContext: {}", applicationContext);
+    //当前上下文
+    log.info("zk name: {}", applicationContext.getBean(ZookeeperClient.class));
+
+    //当前上下文的父容器 get
+    log.info("parent zk name: {}", applicationContext.getParent().getBean(ZookeeperClient.class));
+  }
+```
+
+日志打印：
+
+```java
+zk name: ZookeeperClient(name=From Current Project) //来自当前工程，子容器
+parent zk name: ZookeeperClient(name=From Starter.) //来自父容器
+```
+
+可以看到当前上下文拿到的 bean 是当前工程配置的 bean，然而我们还可以获取到 父容器中配置的 bean，通过先 getParent() (注意NPE)，然后再获取bean，则会获取到 父容器中的 bean。
+
+## 4.总结
+
+自从 Spring Boot 流行以后，Spring 父子容器的概念和使用就显得很少了。目前在网上搜索相关内容，大部分都会通过 SpringMVC + Spring 的关系来理解父子容器。
+
+本文则通过在 SpringBoot 的基础上通过 父子容器来实现 工程脚手架、starter 等 与 工程上下文的 bean 隔离，将父子容器的功能完美应用于上下文的隔离，继续发挥去潜在优势，避免不必要的 bean 冲突。
+
+希望这篇文章能够带给读者一定的收获。
+
+本文工程源码：[parent-and-children](https://github.com/leihuazhe/maple-spring/tree/master/parent-and-children)。

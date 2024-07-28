@@ -1,0 +1,19 @@
+### 7.6.2 ApplicationContextAware and BeanNameAware
+
+当`ApplicationContext`上下文创建实现了`ApplicationContextAware `接口的`bean`对象实例时,该bean实例能够获取到`ApplicationContext`上下文对象的引用。
+
+一个用途是对其他bean进行编程检索
+
+BeanNameAware
+The callback is invoked after population of normal bean properties but before an initialization callback such as InitializingBean afterPropertiesSet or a custom init-method
+
+在 population bean 属性后， init前调用的。
+
+## DefaultSingletonBeanRegistry
+
+```
+        /** Cache of singleton objects: bean name --> bean instance */
+	private final Map<String, Object> singletonObjects = new ConcurrentHashMap<String, Object>(256);
+```
+
+DefaultSingletonBeanRegistry.getSingleton() 判断是否已经缓存了。如果缓存了直接拿。

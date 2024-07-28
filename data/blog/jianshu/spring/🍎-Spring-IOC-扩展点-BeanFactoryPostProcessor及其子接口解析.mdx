@@ -1,0 +1,165 @@
+> `BeanFactoryPostProcessor` 接口的英文描述: Allows for custom modification of an application context's bean definitions, adapting the bean property values of the context's underlying bean factory.<br/>
+> 允许自定义修改应用程序上下文的 `Bean Definitions`，修改上下文的基础 `bean`工厂的 `bean` 属性值
+
+分析 `BeanFactoryPostProcessor` ，此接口为 `Spring IOC` 的一个扩展点。 `Spring`容器启动过程中，获取 `BeanFactory`后，会调用该扩展点实现，主要作用是对已加载的 `BeanDefinition` 进行动态修改。
+
+在解析完成 `Bean` 定义( `XML` 或者 `JAVA` 配置），封装成 `BeanDefinition` 对象,通过调用 `BeanDefinitionRegistry.registry()`的过程之后， 容器初始化 `Bean` 之前的这段时间之间，对已封装好的 `Bean` 定义 `BeanDefinition` 进行修改。
+
+简要概括就是 `Spring` 加载 `Bean` 整体上分为 **注册** 和 **实例化** 两步，在这两步中间执行的逻辑，其中之一就会对实现了 `BeanFactoryPostProcessor`接口的 `Bean` 进行操作，这也是 `Spring` 提供的一个扩展点。
+
+### BeanFactoryPostProcessor 扩展点时机
+
+我们查看 `AbstractApplicationContext` 的 `refresh()` 方法
+
+```java
+public void refresh() throws BeansException, IllegalStateException {
+		synchronized (this.startupShutdownMonitor) {
+			// Prepare this context for refreshing.
+			prepareRefresh();
+			// Tell the subclass to refresh the internal bean factory.
+			ConfigurableListableBeanFactory beanFactory = obtainFreshBeanFactory();
+			// Prepare the bean factory for use in this context.
+			prepareBeanFactory(beanFactory);
+			try {
+				// 1  Allows post-processing of the bean factory in context subclasses.
+				postProcessBeanFactory(beanFactory);
+
+				// 2  Invoke factory processors registered as beans in the context.
+				invokeBeanFactoryPostProcessors(beanFactory);
+
+				// 3  Register bean processors that intercept bean creation.
+				registerBeanPostProcessors(beanFactory);
+
+				// 4  Initialize message source for this context.
+				initMessageSource();
+
+				// 5  Initialize event multicaster for this context.
+				initApplicationEventMulticaster();
+
+				// 6  Initialize other special beans in specific context subclasses.
+				onRefresh();
+
+				// 7  Check for listener beans and register them.
+				registerListeners();
+
+				// 8  Instantiate all remaining (non-lazy-init) singletons.
+				finishBeanFactoryInitialization(beanFactory);
+
+				// 9  Last step: publish corresponding event.
+				finishRefresh();
+			}
+			catch (BeansException ex) {
+				// Destroy already created singletons to avoid dangling resources.
+				destroyBeans();
+				// Reset 'active' flag.
+				cancelRefresh(ex);
+				// Propagate exception to caller.
+				throw ex;
+			}
+			finally {
+				// Reset common introspection caches in Spring's core, since we
+				// might not ever need metadata for singleton beans anymore...
+				resetCommonCaches();
+			}
+		}
+	}
+```
+
+`refresh()` 首先通过 `obtainFreshBeanFactory ` 获取到 `BeanFactory` 工厂，此处工厂实际为 DefaultListableBeanFactory，该工厂持有已解析的所有的Bean定义 BeanDefinition。refresh 在第二步执行 `invokeBeanFactoryPostProcessors`。这里主要是执行实现了 BeanFactoryPostProcessor 接口的 bean 对应的 接口方法。
+
+```java
+protected void invokeBeanFactoryPostProcessors(ConfigurableListableBeanFactory beanFactory) {
+		PostProcessorRegistrationDelegate
+                .invokeBeanFactoryPostProcessors(beanFactory, getBeanFactoryPostProcessors());
+// ... 省略部分代码
+}
+```
+
+### `PostProcessorRegistrationDelegate` 及其子接口的扩展点机制
+
+这里我们引入 `BeanFactoryPostProcessor` 的子接口`BeanDefinitionRegistryPostProcessor`。该接口的方法调用会比父接口更早，并且它新增了一个接口方法。定义如下：
+
+```java
+public interface BeanDefinitionRegistryPostProcessor extends BeanFactoryPostProcessor {
+    //在ApplicationContext 标准初始化之后修改其内部bean定义信息。
+    //此时所有常规bean定义都已加载，但还没有实例化bean。
+    // 这允许在下一个后期处理阶段开始之前进一步添加Bean定义
+	void postProcessBeanDefinitionRegistry(BeanDefinitionRegistry registry) throws BeansException;
+}
+```
+
+`BeanDefinitionRegistryPostProcessor` 的作用是，它提供支持注册新的`BeanDefiniton` (通过 `postProcessBeanDefinitionRegistry` 方法)，并且在下一阶段仍可以被BeanFactoryPostProcessor去修改它的属性值。它在 `BeanFactoryPostProcessor ` 之前执行。
+
+### `BeanFactoryPostProcessor`扩展点实现原理
+
+`PostProcessorRegistrationDelegate` 核心代码
+
+```java
+// ... 省略部分代码
+// 执行没有实现 PriorityOrdered 和 Ordered 接口的普通的
+// BeanDefinitionRegistryPostProcessor实现类
+boolean reiterate = true;
+while (reiterate) {
+    reiterate = false;
+    postProcessorNames = beanFactory.getBeanNamesForType(BeanDefinitionRegistryPostProcessor.class, true, false);
+	for (String ppName : postProcessorNames) {
+		if (!processedBeans.contains(ppName)) {
+			BeanDefinitionRegistryPostProcessor pp = beanFactory.getBean(ppName, BeanDefinitionRegistryPostProcessor.class);
+			registryPostProcessors.add(pp);
+			processedBeans.add(ppName);
+            // 执行 postProcessBeanDefinitionRegistry
+			pp.postProcessBeanDefinitionRegistry(registry);
+			reiterate = true;
+		}
+	}
+}
+// BeanDefinitionRegistryPostProcessor 执行BeanFactoryPostProcessor接口的方法 postProcessBeanFactory
+invokeBeanFactoryPostProcessors(registryPostProcessors, beanFactory);
+// BeanFactoryPostProcessor执行起自身接口方法 postProcessBeanFactory
+invokeBeanFactoryPostProcessors(regularPostProcessors, beanFactory);
+```
+
+- 该执行过程在`AbstractApplicationContext`.`refresh()`方法中的第二步(try内代码)invokeBeanFactoryPostProcessors执行。
+- 找出BeanFactory中持有的实现了BeanDefinitionRegistryPostProcessor接口的bean定义。
+- 对实现类判断，判断是否实现了排序接口 PriorityOrdered 和 Ordered，如果有，优先执行他们
+- 如果没有找到，执行上文代码块里的逻辑，先call 接口定义的 postProcessBeanDefinitionRegistry，再执行从父接口 BeanFactoryPostProcessor 继承的方法 postProcessBeanFactory
+- BeanDefinitionRegistryPostProcessor执行完之后，最后回去执行实现了BeanFactoryPostProcessor 接口的 bean 的 postProcessBeanFactory 方法 。
+
+### `BeanFactoryPostProcessor` 和 `BeanDefinitionRegistryPostProcessor ` 用途
+
+#### BeanFactoryPostProcessor 应用
+
+典型应用：`PropertySourcesPlaceholderConfigurer`
+我们非常常用的场景，在xml中配置数据源等信息时，会使用 `Spring` 的 `EL` 表达式的形式去占位，然后真正的值会在配置文件中给出，配置如下：
+
+```
+ <!--该类的作用是加载配置文件，然后替换EL表达式-->
+<bean class="org.springframework.context.support.PropertySourcesPlaceholderConfigurer">
+        <property name="location" value="classpath*:application.properties"/>
+</bean>
+
+<!--数据源配置-->
+<bean name="dataSource" class="com.alibaba.druid.pool.DruidDataSource"
+          init-method="init" destroy-method="close">
+        <property name="url" value="${jdbc_url}"/>
+        <property name="username" value="${jdbc_username}"/>
+        <property name="password" value="${jdbc_password}"/>
+</bean>
+```
+
+其实在 `Spring` 容器 `registryBeanDefinition` 时，即还没有初始化 `Bean` 之前，`Bean` 定义中的属性值这一块的值仍然是 `EL` 表达式。
+
+容器在加载好 `Bean` 定义后，实例化 `Bean` 之前，会有一个钩子，这个钩子就是上文提到的 `BeanFactoryPostProcessor`。`PropertySourcesPlaceholderConfigurer` 继承了这个接口，所以它的作用就是动态的替换所有已注册 `Bean的BeanDefinition` 信息中的 `EL` 的值为实际配置文件中的值。
+
+#### BeanDefinitionRegistryPostProcessor 应用
+
+典型应用：`MapperScannerConfigurer `
+`MapperScannerConfigurer`为 `mybatis` 整合 `Spring` 时使用的类。该类主要作用是提供对 `mybatis Mapper` 类的自动扫包操作,定义此 `Bean` 之后，通过配置`basePackage`属性，该类会去扫描相应的包下所有的接口类，然后将这些类的 `Bean` 定义改造为 `MapperFactoryBean`。可以有效的避免在 `Spring` 配置文件中为每一个`Mapper`注册对应的 `MapperFactoryBean` 类。
+
+该类可以再 `Spring` 容器实例化 `Bean`之前，对已定义的 `BeanDefinition` 进行 修改。该类会通过 `ClassPathMapperScanner` 扫描器去扫描 指定 `package `下面的接口类，然后对这个 `BeanDefinition` 进行修改，设置它的类型为 `MapperFactoryBean`。
+关于为什么 `mybatis` 要将 `Mapper` 接口类改造为 `MapperFactoryBean` ，将在后续文章中进行分析。
+
+### 总结
+
+`BeanFactoryPostProcessor` 接口是 `Spring IOC` 中 一个时机点比较早的扩展点钩子。它优先于 `BeanPostProcessor` 扩展点 ，我们需要区分这两个扩展点的不同之处。因为它们名字实在是太像了，`BeanFactoryPostProcessor` 接口的扩展点时机在 `IOC` 容器加载完成所有 `BeanDefinition` 后，实例化这些 `Bean`之前的点。
+而 `BeanPostProcessor` 的时机点在容器准备开始实例化 `Bean` 时。`BeanPostProcessor` 扩展点又有很多的子接口，每一个子接口又处在不同的时机，所以后期分析 `BeanPostProcessor` 还任重而道远。

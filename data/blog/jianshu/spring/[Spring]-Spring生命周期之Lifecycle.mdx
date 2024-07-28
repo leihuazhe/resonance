@@ -1,0 +1,261 @@
+![spring-lifecycle.png](https://upload-images.jianshu.io/upload_images/6393906-e32ad6e42a0e96d8.png?imageMogr2/auto-orient/strip%7CimageView2/2/w/1240)
+
+Lifecycle callbacks
+
+> `Initialization callbacks`、`Destruction callbacks`
+> 要与容器的bean生命周期管理交互,即容器在启动后和容器在销毁前对每个bean执行操作，有如下三种方法:
+
+1.实现Spring框架的`InitializingBean`和`DisposableBean`接口。容器为前者调用`afterPropertiesSet()`方法，为后者调用`destroy()`方法，以允许`bean`在初始化和销毁`bean`时执行某些操作。
+
+```java
+public class HelloLifeCycle implements InitializingBean, DisposableBean {
+
+    public void afterPropertiesSet() throws Exception {
+        System.out.println("afterPropertiesSet 启动");
+    }
+
+    public void destroy() throws Exception {
+        System.out.println("DisposableBean 停止");
+    }
+}
+```
+
+2.bean自定义初始化方法和销毁方法,然后在定义bean时指定初始化方法和销毁方法
+
+```
+ <bean id="helloLifeCycle" class="com.hzways.life.cycle.HelloLifeCycle" init-method="init3"
+          destroy-method="destroy3"/>
+
+```
+
+3.JSR-250 @PostConstruct和@PreDestroy注解通常被认为是在现代Spring应用程序中接PostConstruct注解用于方法上，该方法在初始化的依赖注入操作之后被执行。这个方法必须在class被放到service之后被执行，这个注解所在的类必须支持依赖注入。
+
+```
+public class HelloLifeCycle {
+
+    @PostConstruct
+    private void init2() {
+        System.out.println("PostConstruct 启动");
+    }
+
+    @PreDestroy
+    private void destroy2() {
+        System.out.println("PreDestroy 停止");
+    }
+
+}
+```
+
+Note：注意
+`PostConstruct`注解用于方法上，该方法在初始化的依赖注入操作之后被执行。因此,容器必须要开启支持注解形式的依赖注入的功能,加入如下配置即可:
+
+```xml
+ <context:annotation-config/>
+```
+
+如果一个bean同时实现上述三种形式,调用顺序为:
+
+- 创建bean时
+
+```
+1. @PostConstruct 注解方式
+2. InitializingBean 实现接口方式
+3. custom init() 自定义初始化方法方式
+```
+
+- 销毁bean时
+
+```
+1. @PreDestroy 注解方式
+2. DisposableBean  实现接口方式
+3. custom destroy() 自定义销毁方法方式
+```
+
+---
+
+## Spring bean的生命周期
+
+> Startup and shutdown callbacks
+> 结合生命周期机制,生命周期接口定义了任何具有自身生命周期需求的对象的基本方法(例如，启动和停止一些后台过程):
+
+### Lifecycle 生命周期回调钩子
+
+```java
+public interface Lifecycle {
+	/**
+	 * 启动当前组件
+	 * <p>如果组件已经在运行，不应该抛出异常
+	 * <p>在容器的情况下，这会将 开始信号 传播到应用的所有组件中去。
+	 */
+	void start();
+	/**
+	 * (1)通常以同步方式停止该组件，当该方法执行完成后,该组件会被完全停止。当需要异步停
+         * 止行为时，考虑实现SmartLifecycle 和它的 stop(Runnable) 方法变体。
+
+注意，此停止通知在销毁前不能保证到达:在*常规关闭时，{@code Lifecycle} bean将首先收到一个停止通知，然后才传播*常规销毁回调;然而，在*上下文的生命周期内的热刷新或中止的刷新尝试上，只调用销毁方法
+
+对于容器，这将把停止信号传播到应用的所有组件*
+	 */
+	void stop();
+
+	/**
+	  *  检查此组件是否正在运行。
+      *  1. 只有该方法返回false时，start方法才会被执行。
+      *  2. 只有该方法返回true时，stop(Runnable callback)或stop()方法才会被执行。
+	  */
+	boolean isRunning();
+
+}
+```
+
+`LifeCycle`定义`Spring`容器对象的生命周期，任何`spring`管理对象都可以实现该接口。
+然后，当`ApplicationContext`本身接收**启动**和**停止**信号(例如在运行时停止/重启场景)时，spring容器将在容器上下文中找出所有实现了`LifeCycle`及其子类接口的类，并一一调用它们实现的类。spring是通过委托给生命周期处理器`LifecycleProcessor`来实现这一点的。
+
+### LifecycleProcessor 生命周期处理器
+
+> 请注意，`LifecycleProcessor`本身就是`LifeCycle`接口的扩展。它还添加了另外两个方法来响应spring容器上下文的**刷新**(`onRefresh`)和**关闭**(`close`)。
+
+```java
+public interface LifecycleProcessor extends Lifecycle {
+	/**
+	 * 响应Spring容器上下文 refresh
+	 */
+	void onRefresh();
+
+	/**
+	 * 响应Spring容器上下文 close
+	 */
+	void onClose();
+}
+```
+
+### Lifecycle 生命周期的不足
+
+> 常规的`LifeCycle `接口只是在容器上下文显式的调用`start()`/`stop()`方法时，才会去回调`LifeCycle`的实现类的`start` `stop`方法逻辑。并不意味着在上下文刷新时自动启动。
+
+我们可以定义一个类实现`Lifecycle`
+
+```
+public class HelloLifeCycle implements Lifecycle {
+    private volatile boolean running = false;
+
+    public HelloLifeCycle() {
+        System.out.println("构造方法!!!");
+    }
+
+
+    @Override
+    public void start() {
+        System.out.println("lifycycle start");
+        running = true;
+
+    }
+   @Override
+    public void stop() {
+        System.out.println("lifycycle stop");
+        running = false;
+    }
+
+    @Override
+    public boolean isRunning() {
+        return running;
+    }
+}
+```
+
+写一个测试类并在`main`方法里面启动`spring`容器，这里没有显示的调用`contex`t的`start()`和`close()`方法
+
+```java
+public static void main(String[] args) throws InterruptedException {
+        ClassPathXmlApplicationContext applicationContext = new ClassPathXmlApplicationContext("classpath*:services.xml");
+}
+```
+
+结果是，控制台没有任何输出,容器并没有调用生命周期的回调方法.
+
+当我们将启动容器的类，显式的加上start和stop方法后:
+
+```
+public static void main(String[] args) throws InterruptedException {
+        ClassPathXmlApplicationContext applicationContext = new ClassPathXmlApplicationContext("classpath*:services.xml");
+        applicationContext.start();
+        applicationContext.close();
+}
+```
+
+这时我们看控制台,spring容器回调了生命周期的方法
+![lifycycle.png](https://upload-images.jianshu.io/upload_images/6393906-cf8209ccb8c9bde4.png?imageMogr2/auto-orient/strip%7CimageView2/2/w/1240)
+
+### SmartLifecycle 自动的生命周期扩展
+
+> 那么,如果Spring容器上下文没有显式的调用`start`和`destory`(或者`close`,`stop`)等方法时，我们也需要做到生命周期回调，怎么做?
+
+于是`SmartLifecycle`可以做到这一点,它继承自`Lifecycle`接口，新增了如下几个方法:
+
+```java
+public interface SmartLifecycle extends Lifecycle, Phased {
+
+	/**
+	  * 如果该`Lifecycle`类所在的上下文在调用`refresh`时,希望能够自己自动进行回调，则返回`true`* ,
+      * false的值表明组件打算通过显式的start()调用来启动，类似于普通的Lifecycle实现。
+	 */
+	boolean isAutoStartup();
+
+	/**
+	 * Indicates that a Lifecycle component must stop if it is currently running.
+	 * <p>The provided callback is used by the {@link LifecycleProcessor} to support
+	 * an ordered, and potentially concurrent, shutdown of all components having a
+	 * common shutdown order value. The callback <b>must</b> be executed after
+	 * the {@code SmartLifecycle} component does indeed stop.
+	 * <p>The {@link LifecycleProcessor} will call <i>only</i> this variant of the
+	 * {@code stop} method; i.e. {@link Lifecycle#stop()} will not be called for
+	 * {@code SmartLifecycle} implementations unless explicitly delegated to within
+	 * the implementation of this method.
+	 * @see #stop()
+	 * @see #getPhase()
+	 */
+	void stop(Runnable callback);
+
+}
+
+```
+
+`SmartLifecycle`用于细粒度控制特定`bean`的自动启动(包括启动阶段)。另外，请注意，stop通知在销毁前不能保证到达，在常规关闭时，所有生命周期bean将首先收到停止通知，然后才传播一般的销毁回调;但是，在上下文生命周期内的热刷新或中止刷新尝试时，只调用销毁方法。
+
+容器中实现了`Lifecycle`的多个类如果希望有顺序的进行回调时，那么启动和关闭调用的顺序可能很重要。如果任何两个对象之间存在`依赖`关系，那么依赖方将在依赖后开始，在依赖前停止。然而，有时直接依赖关系是未知的。您可能只知道某个类型的对象应该在另一个类型的对象之前开始。在这些情况下，SmartLifecycle接口定义了另一个选项，即在其超接口上定义的getPhase()方法。
+
+当开始时，getPhase()返回值最小的对象先开始，当停止时，遵循相反的顺序。因此，实现`SmartLifecycle`的对象及其`getPhase()`方法返回`Integer.MIN_VALUE`将在第一个开始和最后一个停止。相反，`MAX_VALUE`将指示对象应该在最后启动并首先停止(可能是因为它依赖于要运行的其他进程)。
+
+SmartLifecycle对象的默认`phase`是0。因此，任何实现类的`phase`的值为负数时都表明一个对象应该在这些标准的生命周期回调之前进行执行，反之亦然。
+
+如您所见，`SmartLifecycle`定义的`stop`方法接受一个**回调**。在实现的关闭过程完成之后，任何实现都必须调用回调的`run()`方法。这允许在必要时进行异步关闭，因为`LifecycleProcessor`接口，即`DefaultLifecycleProcessor`，的默认实现，将等待每个阶段中的对象组的超时值来调用这个回调。默认的每个阶段超时为`30秒`。您可以通过在上下文中定义一个名为`lifecycleProcessor`的`bean`来覆盖默认的生命周期处理器实例。如果您只想修改超时，那么定义以下内容就足够了:
+
+```xml
+<bean id="lifecycleProcessor" class="org.springframework.context.support.DefaultLifecycleProcessor">
+    <!-- timeout value in milliseconds -->
+    <property name="timeoutPerShutdownPhase" value="10000"/>
+</bean>
+```
+
+如前所述，`LifecycleProcessor `接口也定义了用于**刷新**和**关闭**上下文的回调方法。后者将简单地驱动关机过程，就好像已经显式地调用了`stop()`一样，但它将在上下文关闭时发生。另一方面，`refresh`回调支持`SmartLifecycle` bean的另一个特性。**当刷新上下文(在所有对象实例化和初始化之后)时**，将调用这个回调，此时，默认的生命周期处理器将检查每个`SmartLifecycle`对象的`isAutoStartup()`方法返回的布尔值。如果是`true`，那么该对象将在此时启动，而不是等待上下文或其自己的`start()`方法的显式调用(与上下文刷新不同，上下文启动不会自动发生在标准上下文实现中)。“阶段”值以及任何“依赖”关系将以如上所述的方式确定启动顺序。
+
+## 总结
+
+`Lifecycle`接口是为启动或停止生命周期,控制定义方法的通用接口。\*这方面的典型用例是控制异步处理。
+
+ <b>注意:此接口不包含特定的`auto-startup`(自动启动) 语义。
+考虑为此目的实现{@link SmartLifecycle}。</b>
+
+<p>可以由两个组件(通常是在* Spring上下文中定义的Spring bean)和容器(通常是Spring {@link ApplicationContext} *本身)实现。
+
+容器将把开始/停止信号传播到每个容器中\*应用的所有组件，例如在运行时的停止/重启场景。
+
+可用于直接调用或通过JMX进行管理操作。在后一种情况下，{@link org.springframework.jmx.export。mbeanexports} _通常是用一个_ {@link org.springframework.jmx.export.assembler来定义的。InterfaceBasedMBeanInfoAssembler} *将活动控制的组件的可见性限制在Lifecycle *接口。\* \* \* <p>
+
+注意，<b>生命周期接口仅支持top-level 并且单例的 bean </b>。
+
+在任何其他组件上，生命周期接口将保持未被检测到的\*，因此将被忽略。
+
+另外，请注意扩展的{@link SmartLifecycle}接口\*提供了与应用程序上下文的启动和关闭阶段的集成
+
+## Shutting down the Spring IoC container gracefully in non-web applications

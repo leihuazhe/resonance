@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Linux 企业7版本，虚拟机下只有lo网卡没eno和eth0网卡</title>
+    <style type="text/css" media="all">
+      body {
+        margin: 0;
+        font-family: "Helvetica Neue", Helvetica, Arial, "Hiragino Sans GB", sans-serif;
+        font-size: 14px;
+        line-height: 20px;
+        color: #777;
+        background-color: white;
+      }
+      .container {
+        width: 700px;
+        margin-right: auto;
+        margin-left: auto;
+      }
+
+      .post {
+        font-family: Georgia, "Times New Roman", Times, "SimSun", serif;
+        position: relative;
+        padding: 70px;
+        bottom: 0;
+        overflow-y: auto;
+        font-size: 16px;
+        font-weight: normal;
+        line-height: 25px;
+        color: #515151;
+      }
+
+      .post h1{
+        font-size: 50px;
+        font-weight: 500;
+        line-height: 60px;
+        margin-bottom: 40px;
+        color: inherit;
+      }
+
+      .post p {
+        margin: 0 0 35px 0;
+      }
+
+      .post img {
+        border: 1px solid #D9D9D9;
+      }
+
+      .post a {
+        color: #28A1C5;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="post">
+        <h1 class="title">Linux 企业7版本，虚拟机下只有lo网卡没eno和eth0网卡</h1>
+        <div class="show-content">
+          <p>此原因可以按照以下步骤分析：</p><p>注意：在操作时候建议关闭NetworkManager服务（service NetworkManager stop;chkconfig NetworkManager off）</p><p>1、网卡驱动，一般用vm安装不会有此种情况</p><p>2、ifconfig -a 看下所有的网卡。默认是按照eht0 1.2.3.4—排序，当网络没有连接的时候</p><p>然后ifconfig -a可以看到主机上有几块网卡以及名称：</p><p>这样可以确定网卡存在，没有问题。如果不存在任何ethx的话，说明网卡有问题。</p><p>3、然后进入配置文件(里面是没有ifcfg-eth0的只有个lo)：</p><p>[root@redhat]# cd /etc/sysconfig/network-scripts/</p><p>[root@redhat]# ls</p><p>ifcfg-lo ifdown-bnep ifdown-ipv6 ifdown-ppp ifdown-tunnel ifup-bnep</p><p>ifup-ipv6 ifup-plusb ifup-routes ifup-wireless network-functions</p><p>ifcfg-lo ifdown-eth ifdown-isdn ifdown-routes ifup ifup-eth ifup-isdn ifup-post ifup-sit init.ipv6-global network-functions-ipv6</p><p>ifdown ifdown-ippp ifdown-post ifdown-sit ifup-aliases ifup-ippp ifup-plip ifup-ppp ifup-tunnel net.hotplug</p><p>4、这样可以新建个ifcfg-ethx。</p><p>然后编辑里面内容添加：</p><p>ONBOOT=yes</p><p>USERCTL=no</p><p>PEERDNS=yes</p><p>TYPE=Ethernet</p><p>DEVICE=eth1 #//（此处的1是网卡设备的序号也就是ifconfig -a中看到的网卡名称后缀数字）</p><p>HWADDR=00:0c:29:64:c2:5f #此处可以不添加，根据自己机器而定(建议先不添加地址是网卡的地址，可以在虚拟机设置里面查看。)</p><p>BOOTPROTO=dhcp</p><p>5、然后保存重启服务</p><p>service network restart</p><p><br></p><p>参考</p><p>https://jingyan.baidu.com/album/fc07f9891d186512ffe51935.html?stepindex=9&amp;st=5&amp;os=1&amp;bd_page_type=1&amp;net_type=3&amp;ssid=&amp;from=<br></p>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
